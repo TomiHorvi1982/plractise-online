@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Socket } from 'socket.io-client';
 import { TrackConfig, SongConfig, SessionData } from '../types';
+import { saveAudioBuffer, loadAudioBuffer, deleteAudioBuffer } from '../utils/indexedDB';
 
 interface TrackMixerProps {
   socket: Socket;
@@ -108,6 +109,19 @@ export default function TrackMixer({
     positionRef.current = 0;
     if (onExternalLyricsChange) onExternalLyricsChange(s.lyrics);
     if (onExternalTabsChange) onExternalTabsChange(s.tabs);
+
+    // Load audio buffers from IndexedDB for this song's tracks
+    const ctx = getAudioCtx();
+    s.tracks.forEach((track) => {
+      loadAudioBuffer(s.id, track.id).then((record) => {
+        if (!record) return;
+        ctx.decodeAudioData(record.data.slice(0)).then((audioBuffer) => {
+          setTracks((prev) => prev.map((t) =>
+            t.id === track.id ? { ...t, buffer: audioBuffer, audioFileName: record.name, audioFileType: record.type } : t
+          ));
+        }).catch(() => {});
+      }).catch(() => {});
+    });
   }, [currentSongIdx]);
 
   useEffect(() => { setTempoState(song.tempo); }, [song.tempo]);
@@ -240,7 +254,9 @@ export default function TrackMixer({
         const arrayBuffer = await blob.arrayBuffer();
         const ctx = getAudioCtx();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-        setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, recording: false, playing: false } : t));
+        const fileName = `recording-${trackId}-${Date.now()}.webm`;
+        setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, recording: false, playing: false, audioFileName: fileName, audioFileType: 'audio/webm;codecs=opus' } : t));
+        await saveAudioBuffer(song.id, trackId, arrayBuffer, fileName, 'audio/webm;codecs=opus').catch(() => {});
         setRecording(null);
         setRecordingTime(0);
       };
@@ -266,7 +282,8 @@ export default function TrackMixer({
       const arrayBuffer = await file.arrayBuffer();
       const ctx = getAudioCtx();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-      setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, playing: false } : t));
+      setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, playing: false, audioFileName: file.name, audioFileType: file.type } : t));
+      await saveAudioBuffer(song.id, trackId, arrayBuffer, file.name, file.type).catch(() => {});
     };
     input.click();
   };

@@ -15,6 +15,8 @@ export interface TrackConfig {
   gainNode?: GainNode;
   pannerNode?: StereoPannerNode;
   height?: number;
+  audioFileName?: string;
+  audioFileType?: string;
 }
 
 export interface SongConfig {
