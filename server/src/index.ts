@@ -55,7 +55,7 @@ io.on('connection', (socket) => {
   // --- Room Management ---
 
   socket.on('create-room', (callback: (roomId: string) => void) => {
-    const roomId = uuidv4().slice(0, 8);
+    const roomId = uuidv4().slice(0, 8).toUpperCase();
     const room: Room = {
       id: roomId,
       users: new Map(),
