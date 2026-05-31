@@ -17,6 +17,7 @@ export interface TrackConfig {
   height?: number;
   audioFileName?: string;
   audioFileType?: string;
+  cloudinaryUrl?: string;
 }
 
 export interface SongConfig {
@@ -54,6 +55,9 @@ export interface SongData {
     muted: boolean;
     solo: boolean;
     height: number;
+    cloudinaryUrl?: string;
+    audioFileName?: string;
+    audioFileType?: string;
   }[];
 }
 

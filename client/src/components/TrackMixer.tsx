@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Socket } from 'socket.io-client';
 import { TrackConfig, SongConfig, SessionData } from '../types';
 import { saveAudioBuffer, loadAudioBuffer, deleteAudioBuffer } from '../utils/indexedDB';
+import { uploadToCloudinary, fetchAudioFromUrl } from '../utils/cloudinary';
 
 interface TrackMixerProps {
   socket: Socket;
@@ -257,6 +258,7 @@ export default function TrackMixer({
         const fileName = `recording-${trackId}-${Date.now()}.webm`;
         setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, recording: false, playing: false, audioFileName: fileName, audioFileType: 'audio/webm;codecs=opus' } : t));
         await saveAudioBuffer(song.id, trackId, arrayBuffer, fileName, 'audio/webm;codecs=opus').catch(() => {});
+        await uploadToCloudinaryIfConfigured(blob, trackId);
         setRecording(null);
         setRecordingTime(0);
       };
@@ -284,6 +286,7 @@ export default function TrackMixer({
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, buffer: audioBuffer, playing: false, audioFileName: file.name, audioFileType: file.type } : t));
       await saveAudioBuffer(song.id, trackId, arrayBuffer, file.name, file.type).catch(() => {});
+      await uploadToCloudinaryIfConfigured(file, trackId);
     };
     input.click();
   };
@@ -365,6 +368,9 @@ export default function TrackMixer({
           id: t.id, name: t.name, type: t.type, color: t.color,
           volume: t.volume, pan: t.pan, pitch: t.pitch,
           muted: t.muted, solo: t.solo, height: t.height || 200,
+          cloudinaryUrl: t.cloudinaryUrl,
+          audioFileName: t.audioFileName,
+          audioFileType: t.audioFileType,
         })),
       })),
       currentSongIndex: currentSongIdx,
@@ -410,6 +416,9 @@ export default function TrackMixer({
   // Cloud save
   const [cloudSessions, setCloudSessions] = useState<{ id: string; name: string; created_at: string }[]>([]);
   const [showCloud, setShowCloud] = useState(false);
+  const [showCloudinary, setShowCloudinary] = useState(false);
+  const [cloudName, setCloudName] = useState(() => localStorage.getItem('jamstream-cloud-name') || '');
+  const [uploadPreset, setUploadPreset] = useState(() => localStorage.getItem('jamstream-upload-preset') || '');
 
   const cloudSave = () => {
     persistLocalSession();
@@ -425,17 +434,35 @@ export default function TrackMixer({
   };
 
   const cloudLoad = (sessionId: string) => {
-    socket.emit('load-session', { id: sessionId }, (result: { id?: string; data?: SessionData; error?: string }) => {
-      if (result.data) {
-        setSongs(result.data.songs.map((sd) => ({
-          ...sd, loopA: sd.loopA, loopB: sd.loopB, lyrics: sd.lyrics || '', tabs: sd.tabs || '',
-          tracks: sd.tracks.map((td) => ({
-            ...td, recording: false, playing: false,
-            buffer: undefined, sourceNode: null, gainNode: undefined, pannerNode: undefined,
-          })),
-        })));
-        setCurrentSongIdx(Math.min(result.data.currentSongIndex, result.data.songs.length - 1));
-        stopPlayback();
+    socket.emit('load-session', { id: sessionId }, async (result: { id?: string; data?: SessionData; error?: string }) => {
+      if (!result.data) return;
+      const ctx = getAudioCtx();
+      setSongs(result.data.songs.map((sd) => ({
+        ...sd, loopA: sd.loopA, loopB: sd.loopB, lyrics: sd.lyrics || '', tabs: sd.tabs || '',
+        tracks: sd.tracks.map((td) => ({
+          ...td, recording: false, playing: false,
+          buffer: undefined, sourceNode: null, gainNode: undefined, pannerNode: undefined,
+          cloudinaryUrl: td.cloudinaryUrl,
+          audioFileName: td.audioFileName,
+          audioFileType: td.audioFileType,
+        })),
+      })));
+      setCurrentSongIdx(Math.min(result.data.currentSongIndex, result.data.songs.length - 1));
+      stopPlayback();
+      // Fetch audio from Cloudinary URLs
+      for (const songData of result.data.songs) {
+        for (const trackData of songData.tracks) {
+          if (trackData.cloudinaryUrl) {
+            try {
+              const audioBuffer = await fetchAudioFromUrl(trackData.cloudinaryUrl, ctx);
+              setTracks((prev) => prev.map((t) =>
+                t.id === trackData.id ? { ...t, buffer: audioBuffer } : t
+              ));
+            } catch (err) {
+              console.error('[cloudinary] fetch failed:', trackData.cloudinaryUrl, err);
+            }
+          }
+        }
       }
     });
   };
@@ -448,6 +475,22 @@ export default function TrackMixer({
     socket.emit('list-sessions', (list: { id: string; name: string; created_at: string }[]) => {
       setCloudSessions(list);
     });
+  };
+
+  // Save cloudinary settings to localStorage
+  useEffect(() => { localStorage.setItem('jamstream-cloud-name', cloudName); }, [cloudName]);
+  useEffect(() => { localStorage.setItem('jamstream-upload-preset', uploadPreset); }, [uploadPreset]);
+
+  const uploadToCloudinaryIfConfigured = async (blob: Blob, trackId: string) => {
+    if (!cloudName || !uploadPreset) return null;
+    try {
+      const url = await uploadToCloudinary(blob, cloudName, uploadPreset);
+      setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, cloudinaryUrl: url } : t));
+      return url;
+    } catch (err) {
+      console.error('[cloudinary] upload failed:', err);
+      return null;
+    }
   };
 
   useEffect(() => {
@@ -517,7 +560,30 @@ export default function TrackMixer({
         <div className="cloud-panel">
           <div className="cloud-actions">
             <button className="btn-xs btn-primary" onClick={cloudSave}>☁️ Save current session</button>
+            <button className={`btn-xs ${showCloudinary ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setShowCloudinary(!showCloudinary)}>
+              📤 Cloudinary
+            </button>
           </div>
+          {showCloudinary && (
+            <div className="cloudinary-settings">
+              <label className="cloudinary-label">
+                Cloud Name
+                <input className="cloudinary-input" type="text" value={cloudName}
+                  onChange={(e) => setCloudName(e.target.value)}
+                  placeholder="your-cloud-name" />
+              </label>
+              <label className="cloudinary-label">
+                Upload Preset
+                <input className="cloudinary-input" type="text" value={uploadPreset}
+                  onChange={(e) => setUploadPreset(e.target.value)}
+                  placeholder="unsigned_upload_preset" />
+              </label>
+              <span className="cloudinary-hint">
+                {cloudName && uploadPreset ? '✅ Cloudinary active' : 'Enter Cloud Name + Upload Preset to enable cloud audio'}
+                . Get both at <a href="https://cloudinary.com/console" target="_blank" rel="noopener">cloudinary.com/console</a>
+              </span>
+            </div>
+          )}
           <div className="cloud-list">
             {cloudSessions.length === 0 ? (
               <span className="cloud-empty">No saved sessions on server</span>
