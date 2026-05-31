@@ -222,7 +222,7 @@ export default function Room({ socket, roomId, username, onLeave, theme, onToggl
   };
 
   return (
-    <div className="room">
+    <main className="room">
       <Toast toasts={toasts} onRemove={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
 
       <header className="room-header" role="banner">
@@ -374,6 +374,6 @@ export default function Room({ socket, roomId, username, onLeave, theme, onToggl
           </button>
         </div>
       </nav>
-    </div>
+    </main>
   );
 }

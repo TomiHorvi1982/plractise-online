@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { Socket } from 'socket.io-client';
 import { connectSocket, disconnectSocket } from './utils/socket';
 import Login from './components/Login';
 import RoomManager from './components/RoomManager';
-import Room from './components/Room';
+
+const Room = lazy(() => import('./components/Room'));
 
 type AppState =
   | { screen: 'login' }
@@ -93,7 +94,7 @@ export default function App() {
 
     case 'rooms':
       return (
-        <div className="app">
+        <main className="app">
           <div className="top-bar">
             <span className="username-display">
               <span aria-hidden="true">&#9679;</span> Logged in as: <strong>{username}</strong>
@@ -133,30 +134,37 @@ export default function App() {
             onJoinRoom={handleJoinRoom}
             loading={loading}
           />
-        </div>
+        </main>
       );
 
     case 'room':
       return (
-        <Room
-          socket={state.socket}
-          roomId={state.roomId}
-          username={username}
-          onLeave={handleLeaveRoom}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
+        <Suspense fallback={
+          <main className="room-loading">
+            <div className="spinner" aria-hidden="true" />
+            <p>Entering Jam Room...</p>
+          </main>
+        }>
+          <Room
+            socket={state.socket}
+            roomId={state.roomId}
+            username={username}
+            onLeave={handleLeaveRoom}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        </Suspense>
       );
 
     case 'error':
       return (
-        <div className="error-screen" role="alert">
+        <main className="error-screen" role="alert">
           <h2>Connection Error</h2>
           <p>{state.message}</p>
           <button className="btn-primary" onClick={handleBackToLogin}>
             Try Again
           </button>
-        </div>
+        </main>
       );
   }
 }
